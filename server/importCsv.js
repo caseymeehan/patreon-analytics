@@ -4,6 +4,13 @@ const path = require('path');
 const csv = require('csv-parser');
 const sqlite3 = require('sqlite3').verbose(); // Use verbose for more detailed errors
 
+// --- Helper: Consistent Active Status Check ---
+function isStatusActive(status) {
+    if (!status) return false;
+    const activeStrings = ['active', 'active patron', 'active_patron'];
+    return activeStrings.includes(status.trim().toLowerCase());
+}
+
 // --- Configuration ---
 const dbPath = path.resolve(__dirname, 'patreon_data.db');
 
@@ -87,6 +94,8 @@ async function importCsv() {
     let rowCount = 0;
     let activePatronCount = 0;
     let netPatronChange = 0; // Initialize net change
+    let lostPatronCount = 0; // ADDED: Initialize lost patron counter
+    let previousUploadId = null; // ADDED: To store the ID of the previous upload
 
     try {
         // Find the latest previous upload
@@ -98,6 +107,7 @@ async function importCsv() {
         if (latestUpload) {
             console.log(`Found previous upload ID: ${latestUpload.upload_id} with ${latestUpload.active_patron_count} active patrons.`);
             previousActiveCount = latestUpload.active_patron_count || 0; // Use 0 if null/undefined
+            previousUploadId = latestUpload.upload_id; // ADDED: Store previous upload ID
         } else {
             console.log('No previous uploads found. This is the first import.');
         }
@@ -109,93 +119,121 @@ async function importCsv() {
         // Insert initial upload record (placeholder for net change)
         const uploadResult = await promisifyDbRun(
             db,
-            'INSERT INTO uploads (filename, row_count, active_patron_count, net_patron_change) VALUES (?, ?, ?, ?)',
-            [csvFilename, 0, 0, 0] // Initial counts are 0
+            'INSERT INTO uploads (filename, row_count, active_patron_count, net_patron_change, lost_patron_count) VALUES (?, ?, ?, ?, ?)',
+            [csvFilename, 0, 0, 0, 0] // Initial counts are 0, including lost_patron_count
         );
         uploadId = uploadResult.lastID;
         console.log(`Created upload record with ID: ${uploadId}`);
 
         // Process CSV Stream
+        const rowProcessingPromises = []; // ADDED: Array to store promises from row processing
         const processStream = new Promise((resolve, reject) => {
             const stream = fs.createReadStream(csvFilePath)
                 .pipe(csv())
                 .on('data', async (row) => {
-                    // Pause stream to wait for async db operations
-                   if (stream && typeof stream.pause === 'function') {
-                       stream.pause();
-                    }
-
-                    try {
-                        rowCount++;
-                        const patreonUserId = row['User ID'];
-                        const patronStatus = row['Patron Status'];
-
-                        if (!patreonUserId) {
-                             console.warn(`Skipping row ${rowCount}: Missing User ID.`);
-                             if (stream && typeof stream.resume === 'function') stream.resume();
-                             return; // Skip row if essential identifier is missing
+                    // ADDED: Push row processing logic into a promise
+                    const rowPromise = (async () => {
+                        if (stream && typeof stream.pause === 'function') {
+                            stream.pause();
                         }
+                        try {
+                            rowCount++;
+                            const patreonUserId = row['User ID']; // Specific to your CSV
+                            const email = row['Email']; // Keep for context, though not directly used in lost patron logic here
+                            const fullName = row['Name']; // Keep for context
+                            const { firstName, lastName } = parseName(fullName); // parseName is used later
 
-                        const pledgeAmount = parseFloat(row['Pledge Amount']) || 0.0; // Handle potential NaN
+                            const patronStatus = row['Patron Status']; // Use this for current status
+                            const pledgeAmountRaw = row['Pledge Amount']; // ADDED: Log raw pledge amount
+                            const pledgeAmount = parseFloat(pledgeAmountRaw.replace(/[^\d.-]/g, '')) || 0; // Use this for current pledge
 
-                        if (patronStatus === 'Active patron' && pledgeAmount > 0) {
-                            activePatronCount++;
+                            if (!patreonUserId) {
+                                console.warn(`Skipping row ${rowCount}: User ID is missing.`);
+                                if (stream && typeof stream.resume === 'function') stream.resume();
+                                return; // continue to next iteration effectively
+                            }
+                            
+                            // Update active patron count for the current import
+                            if (isStatusActive(patronStatus) && pledgeAmount > 0) {
+                                activePatronCount++;
+                            }
+
+                            // 1. Upsert Supporter (ensure patreon_user_id has a UNIQUE constraint for this to be robust)
+                            const upsertSql = `
+                                INSERT INTO supporters (patreon_user_id, email, first_name, last_name)
+                                VALUES (?, ?, ?, ?)
+                                ON CONFLICT(patreon_user_id) DO UPDATE SET
+                                    email = excluded.email,
+                                    first_name = excluded.first_name,
+                                    last_name = excluded.last_name;
+                            `;
+                            await promisifyDbRun(db, upsertSql, [patreonUserId, email, firstName, lastName]);
+
+                            // 2. Get Supporter ID
+                            const supporter = await promisifyDbGet(
+                                db,
+                                'SELECT supporter_id FROM supporters WHERE patreon_user_id = ?',
+                                [patreonUserId]
+                            );
+
+                            if (!supporter || !supporter.supporter_id) {
+                                throw new Error(`Failed to find or create supporter for Patreon User ID: ${patreonUserId}`);
+                            }
+                            const supporterId = supporter.supporter_id;
+
+                            // ADDED: Logic to check for lost patrons
+                            if (previousUploadId) {
+                                const previousSnapshot = await promisifyDbGet(db,
+                                    'SELECT patron_status, pledge_amount FROM supporter_snapshots WHERE supporter_id = ? AND upload_id = ?',
+                                    [supporterId, previousUploadId]
+                                );
+
+                                if (previousSnapshot) {
+                                    const wasActivePreviously = isStatusActive(previousSnapshot.patron_status) && previousSnapshot.pledge_amount > 0;
+                                    const isActiveCurrently = isStatusActive(patronStatus) && pledgeAmount > 0;
+
+                                    if (wasActivePreviously && !isActiveCurrently) {
+                                        lostPatronCount++;
+                                    }
+                                    // Scenario B (status active, but pledge became <=0) is covered by !isActiveCurrently check if active means pledge > 0
+                                }
+                            }
+
+                            // 3. Insert Snapshot
+                            const snapshotSql = `
+                                INSERT INTO supporter_snapshots (upload_id, supporter_id, patron_status, pledge_amount)
+                                VALUES (?, ?, ?, ?);
+                            `;
+                            await promisifyDbRun(db, snapshotSql, [uploadId, supporterId, patronStatus, pledgeAmount]);
+
+                            if (rowCount % 100 === 0) {
+                               console.log(`Processed ${rowCount} rows...`);
+                            }
+
+                        } catch (err) {
+                             console.error(`Error processing row ${rowCount}:`, row);
+                             console.error('Row processing error:', err);
+                             // Stop further processing on row error? Or just log and continue?
+                             // For now, let's reject the stream promise to trigger rollback
+                             reject(err); // This will stop the stream processing
+                        } finally {
+                             // Resume stream for next row
+                             if (stream && typeof stream.resume === 'function') {
+                                 stream.resume();
+                             }
                         }
-
-                        const email = row['Email'];
-                        const name = row['Name'];
-                        const { firstName, lastName } = parseName(name);
-
-                        // 1. Upsert Supporter
-                        const upsertSql = `
-                            INSERT INTO supporters (patreon_user_id, email, first_name, last_name)
-                            VALUES (?, ?, ?, ?)
-                            ON CONFLICT(patreon_user_id) DO UPDATE SET
-                                email = excluded.email,
-                                first_name = excluded.first_name,
-                                last_name = excluded.last_name;
-                        `;
-                        await promisifyDbRun(db, upsertSql, [patreonUserId, email, firstName, lastName]);
-
-                        // 2. Get Supporter ID
-                        const supporter = await promisifyDbGet(
-                            db,
-                            'SELECT supporter_id FROM supporters WHERE patreon_user_id = ?',
-                            [patreonUserId]
-                        );
-
-                        if (!supporter || !supporter.supporter_id) {
-                            throw new Error(`Failed to find or create supporter for Patreon User ID: ${patreonUserId}`);
-                        }
-                        const supporterId = supporter.supporter_id;
-
-                        // 3. Insert Snapshot
-                        const snapshotSql = `
-                            INSERT INTO supporter_snapshots (upload_id, supporter_id, patron_status, pledge_amount)
-                            VALUES (?, ?, ?, ?);
-                        `;
-                        await promisifyDbRun(db, snapshotSql, [uploadId, supporterId, patronStatus, pledgeAmount]);
-
-                        if (rowCount % 100 === 0) {
-                           console.log(`Processed ${rowCount} rows...`);
-                        }
-
-                    } catch (err) {
-                         console.error(`Error processing row ${rowCount}:`, row);
-                         console.error('Row processing error:', err);
-                         // Stop further processing on row error? Or just log and continue?
-                         // For now, let's reject the stream promise to trigger rollback
-                         reject(err); // This will stop the stream processing
-                    } finally {
-                         // Resume stream for next row
-                         if (stream && typeof stream.resume === 'function') {
-                             stream.resume();
-                         }
-                    }
+                    })(); // Immediately invoke the async function
+                    rowProcessingPromises.push(rowPromise); // Add the promise to the array
                 })
-                .on('end', () => {
-                    console.log('CSV file successfully processed.');
-                    resolve(); // Resolve the stream promise
+                .on('end', async () => { // MADE 'end' handler async
+                    try {
+                        await Promise.all(rowProcessingPromises); // ADDED: Wait for all row promises to settle
+                        console.log('CSV file successfully processed and all rows written.');
+                        resolve(); // Resolve the stream promise only after all row promises are done
+                    } catch (err) {
+                        console.error('Error processing one or more rows:', err);
+                        reject(err); // Reject if any row processing failed
+                    }
                 })
                 .on('error', (err) => {
                     console.error('Error reading CSV stream:', err);
@@ -207,14 +245,14 @@ async function importCsv() {
 
         // Calculate Net Change
         netPatronChange = activePatronCount - previousActiveCount;
-        console.log(`Calculation Complete: Current Active=${activePatronCount}, Previous Active=${previousActiveCount}, Net Change=${netPatronChange}`);
+        console.log(`Calculation Complete: Current Active=${activePatronCount}, Previous Active=${previousActiveCount}, Net Change=${netPatronChange}, Lost Patrons=${lostPatronCount}`);
 
         // Update upload record with final counts and net change
-        console.log(`Updating upload record ${uploadId} with final counts: Rows=${rowCount}, Active=${activePatronCount}, Net Change=${netPatronChange}`);
+        console.log(`Updating upload record ${uploadId} with final counts: Rows=${rowCount}, Active=${activePatronCount}, Net Change=${netPatronChange}, Lost=${lostPatronCount}`);
         await promisifyDbRun(
             db,
-            'UPDATE uploads SET row_count = ?, active_patron_count = ?, net_patron_change = ? WHERE upload_id = ?',
-            [rowCount, activePatronCount, netPatronChange, uploadId]
+            'UPDATE uploads SET row_count = ?, active_patron_count = ?, net_patron_change = ?, lost_patron_count = ? WHERE upload_id = ?',
+            [rowCount, activePatronCount, netPatronChange, lostPatronCount, uploadId]
         );
 
         // Commit Transaction
