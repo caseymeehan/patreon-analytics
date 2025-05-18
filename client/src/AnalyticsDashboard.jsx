@@ -1,35 +1,38 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 function AnalyticsDashboard() {
     const [uploads, setUploads] = useState([]);
     const [processedUploads, setProcessedUploads] = useState([]);
     const [error, setError] = useState(null);
+    const fileInputRef = useRef(null); 
+    const [uploading, setUploading] = useState(false); 
+    const [uploadMessage, setUploadMessage] = useState(''); 
 
-    useEffect(() => {
-        async function fetchData() {
-            try {
-                const response = await fetch('http://localhost:3001/api/uploads-summary');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                setUploads(data);
-            } catch (e) {
-                console.error("Failed to fetch uploads summary:", e);
-                setError(e.message);
+    const fetchUploadsSummary = useCallback(async () => {
+        setError(null); 
+        try {
+            const response = await fetch('http://localhost:3001/api/uploads-summary');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
+            const data = await response.json();
+            setUploads(data);
+        } catch (e) {
+            console.error("Failed to fetch uploads summary:", e);
+            setError(e.message);
         }
-        fetchData();
     }, []);
 
     useEffect(() => {
-        if (uploads.length > 0) {
-            // Sort uploads by timestamp in ascending order (oldest first)
-            const sortedUploads = [...uploads].sort((a, b) => new Date(a.upload_timestamp) - new Date(b.upload_timestamp));
+        fetchUploadsSummary();
+    }, [fetchUploadsSummary]);
 
+    useEffect(() => {
+        if (uploads.length > 0) {
+            const sortedUploads = [...uploads].sort((a, b) => new Date(a.upload_timestamp) - new Date(b.upload_timestamp));
             const calculatedUploads = sortedUploads.map((currentUpload, index) => {
                 let churnPercentage = null;
-                if (index > 0) { // Ensure there's a previous upload
+                if (index > 0) { 
                     const previousUpload = sortedUploads[index - 1];
                     if (previousUpload.active_patron_count > 0) {
                         churnPercentage = (currentUpload.lost_patron_count / previousUpload.active_patron_count) * 100;
@@ -40,11 +43,53 @@ function AnalyticsDashboard() {
                     churn_percentage: churnPercentage,
                 };
             });
-            setProcessedUploads(calculatedUploads);
+            setProcessedUploads([...calculatedUploads].reverse());
+        } else {
+            setProcessedUploads([]); 
         }
     }, [uploads]);
 
-    if (error) {
+    const handleFileChange = async (event) => {
+        const file = event.target.files[0];
+        if (!file) {
+            return;
+        }
+        event.target.value = null; 
+
+        setUploading(true);
+        setUploadMessage('');
+
+        const formData = new FormData();
+        formData.append('patreonCsv', file); 
+
+        try {
+            const response = await fetch('http://localhost:3001/api/upload-csv', {
+                method: 'POST',
+                body: formData,
+            });
+            const resultText = await response.text();
+            let result;
+            try {
+                result = JSON.parse(resultText); 
+            } catch (parseError) {
+                console.error("Failed to parse server response as JSON:", resultText);
+                throw new Error(`Server returned non-JSON response: ${response.status} - ${resultText.substring(0, 100)}`);
+            }
+
+            if (!response.ok) {
+                throw new Error(result.message || `Upload failed with status: ${response.status}`);
+            }
+            setUploadMessage(`Success: ${result.message || 'File uploaded successfully.'}`);
+            fetchUploadsSummary(); 
+        } catch (err) {
+            console.error("Upload error:", err);
+            setUploadMessage(`Error: ${err.message}`);
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    if (error && processedUploads.length === 0) { 
         return <div className="p-4 text-red-600">Error fetching data: {error}</div>;
     }
 
@@ -57,16 +102,33 @@ function AnalyticsDashboard() {
     return (
         <div className="p-6">
             <h1 className="text-2xl font-bold mb-4">Patreon Analytics Dashboard</h1>
+            
+            <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept=".csv"
+                onChange={handleFileChange}
+            />
             <button 
-                className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-6"
+                onClick={() => fileInputRef.current.click()}
+                className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-2"
+                disabled={uploading}
             >
-                Import CSV
+                {uploading ? 'Uploading...' : 'Import CSV'}
             </button>
             
-            {processedUploads.length === 0 && !error && <p className="text-gray-500">Loading data or no uploads found...</p>}
+            {uploadMessage && (
+                <p className={`my-2 text-sm ${uploadMessage.startsWith('Error:') ? 'text-red-600' : 'text-green-600'}`}>
+                    {uploadMessage}
+                </p>
+            )}
+            {error && <p className="my-2 text-sm text-red-600">Error fetching latest data: {error}</p>}
+
+            {processedUploads.length === 0 && !error && !uploading && <p className="text-gray-500 mt-4">Loading data or no uploads found...</p>}
             
             {processedUploads.length > 0 && (
-                <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
+                <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg mt-4">
                     <table className="min-w-full divide-y divide-gray-200 border border-gray-300">
                         <thead className="bg-gray-50">
                             <tr>

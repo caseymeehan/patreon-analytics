@@ -104,3 +104,6 @@ dist
 # Custom
 server/patreon_data.db
 server/patreon_data.db-journal
+
+# Uploaded CSV files
+server/uploads/
