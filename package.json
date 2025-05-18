@@ -1,0 +1,24 @@
+{
+  "name": "patreon-analytics",
+  "version": "1.0.0",
+  "description": "Patreon Analytics Tool",
+  "main": "server/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/server.js",
+    "import": "node server/importCsv.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "patreon",
+    "analytics"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "csv-parser": "^3.2.0",
+    "sqlite3": "^5.1.7",
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
