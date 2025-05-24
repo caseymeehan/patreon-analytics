@@ -2,7 +2,6 @@
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
-const sqlite3 = require('sqlite3').verbose();
 
 // --- Helper: Consistent Active Status Check ---
 function isStatusActive(status) {
@@ -10,9 +9,6 @@ function isStatusActive(status) {
     const activeStrings = ['active', 'active patron', 'active_patron'];
     return activeStrings.includes(status.trim().toLowerCase());
 }
-
-// --- Configuration ---
-const dbPath = path.resolve(__dirname, 'patreon_data.db');
 
 // --- Database Promise Wrappers ---
 function promisifyDbRun(db, sql, params = []) {
@@ -67,23 +63,20 @@ function parseName(fullName) {
 }
 
 // --- Main Import Function ---
-async function processPatreonCsv(csvFilePath) {
+async function processPatreonCsv(csvFilePath, db) {
     return new Promise(async (resolveOuter, rejectOuter) => {
         const csvFilename = path.basename(csvFilePath);
-        console.log(`Processing CSV file: ${csvFilename}`);
+        console.log(`Processing CSV file: ${csvFilename} using provided DB connection.`);
 
         if (!fs.existsSync(csvFilePath)) {
             console.error(`Error: CSV file not found at ${csvFilePath}`);
             return rejectOuter({ message: `CSV file not found at ${csvFilePath}` });
         }
 
-        const db = new sqlite3.Database(dbPath, (err) => {
-            if (err) {
-                console.error('Error opening database:', err.message);
-                return rejectOuter({ message: 'Error opening database', details: err.message });
-            }
-            console.log('Connected to the SQLite database.');
-        });
+        if (!db) {
+            console.error('Error: Database connection object was not provided to processPatreonCsv.');
+            return rejectOuter({ message: 'Database connection not provided.' });
+        }
 
         let uploadId;
         let rowCount = 0;
@@ -252,16 +245,9 @@ async function processPatreonCsv(csvFilePath) {
             console.log('Transaction rolled back.');
             rejectOuter({ message: 'Error during import process', details: err.message });
         } finally {
-            db.close((err) => {
-                if (err) {
-                    console.error('Error closing database:', err.message);
-                } else {
-                    console.log('Database connection closed.');
-                }
-            });
+            console.log('CSV processing function finished.');
         }
     });
 }
 
-// Export the refactored function
-module.exports = { processPatreonCsv };
+module.exports = { processPatreonCsv, isStatusActive };
