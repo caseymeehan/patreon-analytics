@@ -28,12 +28,11 @@ const db = new sqlite3.Database(dbPath, (err) => {
     app.locals.db = db; 
 
     // Initialize database tables (ensure this runs after DB is connected)
-    // initializeDatabase(dbPath); // Pass the determined path
+    initializeDatabase(db, dbPath); // Pass the opened db object and path for logging
     // We'll call initializeDatabase after the DB connection is confirmed open and assigned to app.locals.db
     // This ensures that initializeDatabase uses the same db instance logic if it were to need it (though it creates its own for now)
     // For now, initializeDatabase creates its own connection. This is fine.
     // The primary goal here is that analyticsRoutes uses the shared app.locals.db
-    initializeDatabase(dbPath); // Call with the correct path
 });
 
 // Middleware
