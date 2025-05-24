@@ -11,7 +11,7 @@ function AnalyticsDashboard() {
     const fetchUploadsSummary = useCallback(async () => {
         setError(null); 
         try {
-            const response = await fetch('http://localhost:3001/api/uploads-summary');
+            const response = await fetch('/api/uploads-summary');
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -63,7 +63,7 @@ function AnalyticsDashboard() {
         formData.append('patreonCsv', file); 
 
         try {
-            const response = await fetch('http://localhost:3001/api/upload-csv', {
+            const response = await fetch('/api/upload-csv', {
                 method: 'POST',
                 body: formData,
             });

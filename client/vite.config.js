@@ -8,4 +8,13 @@ export default defineConfig({
     react(),
     tailwindcssVite(), 
   ],
+  server: { 
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        // secure: false, // uncomment if your backend is not on https
+      }
+    }
+  }
 });
