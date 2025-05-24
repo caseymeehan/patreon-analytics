@@ -16,45 +16,49 @@ const dbPath = path.resolve(__dirname, dbFileName);
 
 console.log(`Using database: ${dbPath}`);
 
-// Initialize and share database connection
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error opening database:', err.message);
-        // Potentially exit or handle more gracefully if DB connection is critical at start
-        process.exit(1); 
-    }
-    console.log(`Successfully connected to the SQLite database at ${dbPath}.`);
-    // Make db connection available to routes
-    app.locals.db = db; 
-
-    // Initialize database tables (ensure this runs after DB is connected)
-    initializeDatabase(db, dbPath); // Pass the opened db object and path for logging
-    // We'll call initializeDatabase after the DB connection is confirmed open and assigned to app.locals.db
-    // This ensures that initializeDatabase uses the same db instance logic if it were to need it (though it creates its own for now)
-    // For now, initializeDatabase creates its own connection. This is fine.
-    // The primary goal here is that analyticsRoutes uses the shared app.locals.db
-});
-
-// Middleware
+// Define middleware and routes first
 app.use(cors());
 app.use(express.json());
-
-// API Routes
-// Routes will now access the db via req.app.locals.db
 app.use('/api', analyticsRoutes);
-
-// Basic root route
 app.get('/', (req, res) => {
   res.send('Patreon Analytics Backend is running!');
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+async function startServer() {
+    try {
+        // Promisify database opening
+        const db = await new Promise((resolve, reject) => {
+            const instance = new sqlite3.Database(dbPath, (err) => {
+                if (err) {
+                    console.error('Error opening database:', err.message);
+                    reject(err); // Reject the promise on error
+                } else {
+                    console.log(`Successfully connected to the SQLite database at ${dbPath}.`);
+                    resolve(instance); // Resolve with the db instance
+                }
+            });
+        });
+
+        app.locals.db = db; // Make db connection available to routes
+
+        await initializeDatabase(db, dbPath); // Await table initialization
+
+        // Start server only after DB is fully ready and initialized
+        app.listen(PORT, () => {
+            console.log(`Server listening on port ${PORT}`);
+        });
+
+    } catch (error) {
+        console.error("Failed to start server:", error);
+        process.exit(1); // Exit if server fails to start
+    }
+}
+
+startServer(); // Call the async function to start the server
 
 // Graceful shutdown: Close the database connection when the app exits
 process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully...');
     if (app.locals.db) {
         app.locals.db.close((err) => {
             if (err) {
@@ -63,5 +67,7 @@ process.on('SIGINT', () => {
             console.log('Database connection closed.');
             process.exit(0);
         });
+    } else {
+        process.exit(0);
     }
 });

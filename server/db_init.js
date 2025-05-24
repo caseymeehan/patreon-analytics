@@ -31,18 +31,28 @@ CREATE TABLE IF NOT EXISTS supporter_snapshots (
 );
 `;
 
-function initializeDatabase(db, databasePath) {
-    console.log(`Initializing database at path: ${databasePath}`);
-
-    db.serialize(() => {
-        db.exec(createTablesSQL, (err) => {
+function execPromise(db, sql) {
+    return new Promise((resolve, reject) => {
+        db.exec(sql, function(err) { 
             if (err) {
-                console.error('Error creating tables:', err.message);
+                console.error(`Error executing SQL batch: ${sql.substring(0,100)}...`, err.message);
+                reject(err);
             } else {
-                console.log('Tables created or already exist.');
+                resolve();
             }
         });
     });
+}
+
+async function initializeDatabase(db, databasePath) {
+    console.log(`Initializing database at path (async): ${databasePath}`);
+    try {
+        await execPromise(db, createTablesSQL);
+        console.log('Tables created or already exist (async).');
+    } catch (err) {
+        console.error('Failed to initialize database tables (async):', err);
+        throw err; 
+    }
 }
 
 module.exports = { initializeDatabase };
