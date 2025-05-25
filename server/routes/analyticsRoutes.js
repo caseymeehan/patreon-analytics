@@ -47,14 +47,21 @@ function promisifyDbAll(db, sql, params = []) {
 }
 
 router.get('/uploads-summary', async (req, res) => {
-    const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
-        if (err) {
-            console.error('Error opening database:', err.message);
-            return res.status(500).json({ error: 'Failed to connect to database' });
-        }
-    });
+    let db; // Declare db outside try so finally can access it
 
     try {
+        // Promisify the database connection
+        db = await new Promise((resolve, reject) => {
+            const connection = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
+                if (err) {
+                    console.error('Error opening database:', err.message);
+                    reject(err); // Reject the promise on connection error
+                } else {
+                    resolve(connection); // Resolve with the connected db object
+                }
+            });
+        });
+
         const sql = `
             SELECT 
                 upload_id,
@@ -69,8 +76,12 @@ router.get('/uploads-summary', async (req, res) => {
         `;
         const uploads = await promisifyDbAll(db, sql);
         res.json(uploads);
+
     } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch uploads summary', details: error.message });
+        // Ensure we send a response even if the DB connection itself failed
+        if (!res.headersSent) {
+             res.status(500).json({ error: 'Failed to fetch uploads summary', details: error.message });
+        }
     } finally {
         if (db) {
             db.close((err) => {
