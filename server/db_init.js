@@ -1,8 +1,4 @@
 // /Users/caseymeehan/Documents/base/work/other/code/Patreon_Analytics/server/db_init.js
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-
-const dbPath = path.resolve(__dirname, 'patreon_data.db');
 
 const createTablesSQL = `
 CREATE TABLE IF NOT EXISTS uploads (
@@ -34,29 +30,15 @@ CREATE TABLE IF NOT EXISTS supporter_snapshots (
 );
 `;
 
-function initializeDatabase() {
-    const db = new sqlite3.Database(dbPath, (err) => {
+function initializeDatabase(db) {
+    console.log('Initializing tables on the provided database connection...');
+
+    db.exec(createTablesSQL, (err) => {
         if (err) {
-            console.error('Error opening database for initialization:', err.message);
-            return;
+            console.error('Error creating tables:', err.message);
+        } else {
+            console.log('Tables created or already exist.');
         }
-        console.log('Connected to the SQLite database for initialization.');
-
-        db.exec(createTablesSQL, (err) => {
-            if (err) {
-                console.error('Error creating tables:', err.message);
-            } else {
-                console.log('Tables created or already exist.');
-            }
-
-            db.close((err) => {
-                if (err) {
-                    console.error('Error closing database after initialization:', err.message);
-                } else {
-                    console.log('Database connection closed after initialization.');
-                }
-            });
-        });
     });
 }
 

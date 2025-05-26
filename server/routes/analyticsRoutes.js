@@ -1,12 +1,10 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const multer = require('multer'); 
 const { processPatreonCsv } = require('../importCsv'); 
 const fs = require('fs'); 
 
 const router = express.Router();
-const dbPath = path.resolve(__dirname, '../patreon_data.db'); 
 
 const UPLOAD_DIR = path.resolve(__dirname, '../uploads');
 
@@ -47,21 +45,9 @@ function promisifyDbAll(db, sql, params = []) {
 }
 
 router.get('/uploads-summary', async (req, res) => {
-    let db; // Declare db outside try so finally can access it
+    const db = req.app.locals.db;
 
     try {
-        // Promisify the database connection
-        db = await new Promise((resolve, reject) => {
-            const connection = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
-                if (err) {
-                    console.error('Error opening database:', err.message);
-                    reject(err); // Reject the promise on connection error
-                } else {
-                    resolve(connection); // Resolve with the connected db object
-                }
-            });
-        });
-
         const sql = `
             SELECT 
                 upload_id,
@@ -78,17 +64,8 @@ router.get('/uploads-summary', async (req, res) => {
         res.json(uploads);
 
     } catch (error) {
-        // Ensure we send a response even if the DB connection itself failed
         if (!res.headersSent) {
              res.status(500).json({ error: 'Failed to fetch uploads summary', details: error.message });
-        }
-    } finally {
-        if (db) {
-            db.close((err) => {
-                if (err) {
-                    console.error('Error closing database:', err.message);
-                }
-            });
         }
     }
 });
@@ -99,10 +76,11 @@ router.post('/upload-csv', upload.single('patreonCsv'), async (req, res) => {
     }
 
     const csvFilePath = req.file.path;
+    const db = req.app.locals.db; // Get the shared database connection
 
     try {
         console.log(`Route: Attempting to process CSV: ${csvFilePath}`);
-        const result = await processPatreonCsv(csvFilePath);
+        const result = await processPatreonCsv(db, csvFilePath); // Pass db as first argument
         console.log('Route: CSV processing successful:', result);
         res.status(200).json({ 
             message: 'CSV processed successfully!', 

@@ -1,8 +1,6 @@
 // /Users/caseymeehan/Documents/base/work/other/code/Patreon_Analytics/server/importCsv.js
 const fs = require('fs');
-const path = require('path');
 const csv = require('csv-parser');
-const sqlite3 = require('sqlite3').verbose();
 
 // --- Helper: Consistent Active Status Check ---
 function isStatusActive(status) {
@@ -10,9 +8,6 @@ function isStatusActive(status) {
     const activeStrings = ['active', 'active patron', 'active_patron'];
     return activeStrings.includes(status.trim().toLowerCase());
 }
-
-// --- Configuration ---
-const dbPath = path.resolve(__dirname, 'patreon_data.db');
 
 // --- Database Promise Wrappers ---
 function promisifyDbRun(db, sql, params = []) {
@@ -67,9 +62,9 @@ function parseName(fullName) {
 }
 
 // --- Main Import Function ---
-async function processPatreonCsv(csvFilePath) {
+async function processPatreonCsv(db, csvFilePath) {
     return new Promise(async (resolveOuter, rejectOuter) => {
-        const csvFilename = path.basename(csvFilePath);
+        const csvFilename = require('path').basename(csvFilePath);
         console.log(`Processing CSV file: ${csvFilename}`);
 
         if (!fs.existsSync(csvFilePath)) {
@@ -77,13 +72,7 @@ async function processPatreonCsv(csvFilePath) {
             return rejectOuter({ message: `CSV file not found at ${csvFilePath}` });
         }
 
-        const db = new sqlite3.Database(dbPath, (err) => {
-            if (err) {
-                console.error('Error opening database:', err.message);
-                return rejectOuter({ message: 'Error opening database', details: err.message });
-            }
-            console.log('Connected to the SQLite database.');
-        });
+        console.log('Using provided SQLite database connection for CSV import.');
 
         let uploadId;
         let rowCount = 0;
@@ -251,14 +240,6 @@ async function processPatreonCsv(csvFilePath) {
             await promisifyDbRun(db, 'ROLLBACK').catch(rbErr => console.error('Error rolling back:', rbErr));
             console.log('Transaction rolled back.');
             rejectOuter({ message: 'Error during import process', details: err.message });
-        } finally {
-            db.close((err) => {
-                if (err) {
-                    console.error('Error closing database:', err.message);
-                } else {
-                    console.log('Database connection closed.');
-                }
-            });
         }
     });
 }

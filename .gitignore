@@ -102,8 +102,8 @@ dist
 *.sw?
 
 # Custom
-server/patreon_data.db
-server/patreon_data.db-journal
+server/patreon_data_*.db
+server/patreon_data_*.db-journal
 
 # Uploaded CSV files
 server/uploads/
