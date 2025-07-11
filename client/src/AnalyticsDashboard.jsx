@@ -136,7 +136,9 @@ function AnalyticsDashboard() {
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-300">Active Patrons</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-300">Net Change</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-300">Lost Patrons</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Churn %</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-300">Churn %</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-300">Total Revenue</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estimated Payment (90%)</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -146,10 +148,16 @@ function AnalyticsDashboard() {
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 border-r border-gray-300">{upload.active_patron_count}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 border-r border-gray-300">{upload.net_patron_change}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 border-r border-gray-300">{upload.lost_patron_count}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 border-r border-gray-300">
                                         {upload.churn_percentage !== null 
                                             ? `${upload.churn_percentage.toFixed(2)}%` 
                                             : 'N/A'}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 border-r border-gray-300">
+                                        ${upload.total_revenue ? upload.total_revenue.toFixed(2) : '0.00'}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                                        ${upload.estimated_payment ? upload.estimated_payment.toFixed(2) : '0.00'}
                                     </td>
                                 </tr>
                             ))}

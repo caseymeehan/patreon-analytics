@@ -64,15 +64,25 @@ router.get('/uploads-summary', async (req, res) => {
 
         const sql = `
             SELECT 
-                upload_id,
-                filename,
-                upload_timestamp,
-                row_count,
-                active_patron_count,
-                net_patron_change,
-                lost_patron_count
-            FROM uploads
-            ORDER BY upload_id DESC; 
+                u.upload_id,
+                u.filename,
+                u.upload_timestamp,
+                u.row_count,
+                u.active_patron_count,
+                u.net_patron_change,
+                u.lost_patron_count,
+                COALESCE(r.total_revenue, 0) as total_revenue,
+                COALESCE(r.total_revenue * 0.90, 0) as estimated_payment
+            FROM uploads u
+            LEFT JOIN (
+                SELECT 
+                    ss.upload_id,
+                    SUM(ss.pledge_amount) as total_revenue
+                FROM supporter_snapshots ss
+                WHERE ss.patron_status = 'Active patron'
+                GROUP BY ss.upload_id
+            ) r ON u.upload_id = r.upload_id
+            ORDER BY u.upload_id DESC; 
         `;
         const uploads = await promisifyDbAll(db, sql);
         res.json(uploads);
